@@ -3,7 +3,11 @@
 **Produto da Elevar Labs.** Esta versão corresponde à v0.1.5 do antigo **Facilita.sig**.
 A alteração de nome não modifica regras fiscais, estruturas SQL ou o conteúdo dos dados do usuário.
 
-### Compatibilidade com a instalação Facilita.sig
+## Interface
+
+![Tela inicial do Elevar Fiscal com o roteiro de apuração](docs/images/visao-geral.png)
+
+## Compatibilidade com a instalação Facilita.sig
 
 - **Antes de atualizar**, feche todas as instâncias do programa e faça backup dos bancos existentes.
 - **Nomes atuais:** `elevar-fiscal.db` (empresas e documentos) e `elevar-fiscal-ref.db` (tabelas de referência).
