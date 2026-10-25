@@ -30,10 +30,11 @@ public final class AboutDialog {
         JLabel title = new JLabel(AppInfo.NAME + " — versão " + AppInfo.VERSION);
         title.setFont(title.getFont().deriveFont(Font.BOLD, 16f));
         JTextArea text = new JTextArea(
-                "Casca do sistema de conferência fiscal autônoma.\n\n"
+                "Elevar Fiscal — projeto de auditoria e conformidade tributária da Elevar Labs.\n\n"
                         + "Hipótese de pesquisa: " + AppInfo.HYPOTHESIS + "\n\n"
-                        + "Esta versão contém apenas a estrutura de áreas de trabalho, menus e rotina linear. "
-                        + "Nenhuma funcionalidade de backend foi implementada.");
+                        + "A versão 0.1.5 inclui cadastros de empresas, importação e verificação de XML de "
+                        + "NF-e/NFS-e, tabelas de referência fiscal e catálogo de obrigações acessórias. "
+                        + "Os módulos de apuração continuam em desenvolvimento.");
         text.setEditable(false);
         text.setLineWrap(true);
         text.setWrapStyleWord(true);

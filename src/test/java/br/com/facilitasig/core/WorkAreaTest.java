@@ -45,4 +45,16 @@ class WorkAreaTest {
     void registryExposesAtLeastOneArea() {
         assertFalse(WorkAreas.all().isEmpty());
     }
+
+    @Test
+    void onlyGeneralFeaturesWorkWithoutACompany() {
+        java.util.Set<String> general = new java.util.HashSet<String>(java.util.Arrays.asList(
+                "cad.empresa", "conf.regras", "cons.tabelas", "oa.catalogo", "cons.calendario", "cons.legislacao", "util.chave", "util.xml", "cfg.sistema", "cfg.pastas"));
+        for (Feature f : area.allFeatures()) {
+            assertEquals(!general.contains(f.id()), f.companyScoped(), f.id());
+        }
+        assertTrue(area.findFeature("mov.entradas").get().companyScoped());
+        assertTrue(area.findFeature("oa.efdcontrib").get().companyScoped());
+        assertFalse(area.findFeature("cad.empresa").get().companyScoped());
+    }
 }

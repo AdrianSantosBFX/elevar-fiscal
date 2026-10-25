@@ -19,6 +19,7 @@ public final class Feature {
     private final String description;
     private final String glyph;
     private final Tone tone;
+    private final boolean companyScoped;
 
     /**
      * @param id          identificador estável (ex.: "conf.autonoma")
@@ -29,12 +30,30 @@ public final class Feature {
      * @param tone        cor do ícone
      */
     public Feature(String id, String title, String shortTitle, String description, String glyph, Tone tone) {
+        this(id, title, shortTitle, description, glyph, tone, true);
+    }
+
+    private Feature(String id, String title, String shortTitle, String description, String glyph, Tone tone, boolean companyScoped) {
         this.id = id;
         this.title = title;
         this.shortTitle = shortTitle;
         this.description = description;
         this.glyph = glyph;
         this.tone = tone;
+        this.companyScoped = companyScoped;
+    }
+
+    /**
+     * A funcionalidade trabalha com dados de uma empresa (notas, SPED, apuração)? Nesse caso só
+     * abre com uma empresa selecionada e mostra apenas os dados dela. Padrão: sim.
+     */
+    public boolean companyScoped() {
+        return companyScoped;
+    }
+
+    /** Cópia que não depende de empresa selecionada (cadastros gerais, utilitários, configurações). */
+    public Feature withoutCompany() {
+        return new Feature(id, title, shortTitle, description, glyph, tone, false);
     }
 
     public String id() {
@@ -66,7 +85,7 @@ public final class Feature {
     }
 
     public Feature withShortTitle(String newShortTitle) {
-        return new Feature(id, title, newShortTitle, description, glyph, tone);
+        return new Feature(id, title, newShortTitle, description, glyph, tone, companyScoped);
     }
 
     @Override

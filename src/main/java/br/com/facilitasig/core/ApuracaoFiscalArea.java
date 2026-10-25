@@ -22,12 +22,16 @@ public final class ApuracaoFiscalArea {
 
     private static final Feature SEP = Feature.SEPARATOR;
 
+    /**
+     * Quase tudo trabalha com os dados de uma empresa e só abre com ela selecionada (menu Empresa).
+     * Ficam de fora apenas o cadastro de empresas, consultas gerais, utilitários e configurações.
+     */
     public static WorkArea create() {
         // ---- Cadastros
         Feature empresa = f("cad.empresa", "Empresas e Estabelecimentos",
                 "Cadastro da empresa e de seus estabelecimentos: CNPJ, inscrições estadual e municipal, "
                         + "CNAE, UF e município. É o ponto de partida da apuração: os dados daqui definem "
-                        + "quais regras fiscais se aplicam.", "E", Tone.BLUE).withShortTitle("Empresa");
+                        + "quais regras fiscais se aplicam.", "E", Tone.BLUE).withShortTitle("Empresa").withoutCompany();
         Feature regime = f("cad.regime", "Regime Tributário e Parâmetros Fiscais",
                 "Regime da empresa (MEI, Simples Nacional, Lucro Presumido ou Lucro Real), "
                         + "opção pelo regime regular de IBS/CBS, atividades e percentuais de presunção, "
@@ -66,7 +70,7 @@ public final class ApuracaoFiscalArea {
                 "!", Tone.ORANGE);
         Feature regras = f("conf.regras", "Regras Aplicadas e Base Legal",
                 "Para cada achado, a regra aplicada, a norma de origem (lei, artigo, vigência) e a "
-                        + "explicação fundamentada.", "§", Tone.ORANGE);
+                        + "explicação fundamentada.", "§", Tone.ORANGE).withoutCompany();
 
         // ---- Impostos
         Feature icms = f("imp.icms", "ICMS",
@@ -93,8 +97,13 @@ public final class ApuracaoFiscalArea {
 
         // ---- Obrigações acessórias
         Feature central = f("oa.central", "Central de Obrigações Acessórias",
-                "Obrigações aplicáveis à empresa no período, conforme o regime, com prazo, situação "
-                        + "e acesso à geração de cada uma.", "OA", Tone.TEAL).withShortTitle("Obrigações");
+                "Obrigações acessórias da empresa em uso na competência e no ano-calendário (Lucro Presumido e Lucro "
+                        + "Real), com situação (obrigatória, a confirmar, não se aplica), motivo, vencimento e base legal; "
+                        + "e os vencimentos do mês.", "OA", Tone.TEAL).withShortTitle("Obrigações");
+        Feature catalogo = f("oa.catalogo", "Catálogo de Obrigações (Lucro Presumido e Real)",
+                "Todas as obrigações acessórias federais, estaduais e municipais do Lucro Presumido e do Lucro Real: "
+                        + "quem está obrigado, prazo, base legal, vigência e o que as notas fiscais sustentam; calendário de "
+                        + "vencimentos por regime e UF; feriados nacionais.", "Cat", Tone.TEAL).withoutCompany();
         Feature efdIcms = f("oa.efdicms", "EFD ICMS/IPI",
                 "Geração e validação do SPED Fiscal a partir dos documentos conferidos.", "EFD", Tone.TEAL);
         Feature efdContrib = f("oa.efdcontrib", "EFD-Contribuições",
@@ -111,22 +120,27 @@ public final class ApuracaoFiscalArea {
         // ---- Consultas
         Feature docChave = f("cons.chave", "Documento por Chave de Acesso",
                 "Localiza um documento pela chave de 44 dígitos e mostra seus dados, itens e achados.", "K", Tone.GRAY);
+        Feature tabelas = f("cons.tabelas", "Tabelas de Referência (NCM, CST, ICMS, ISS)",
+                "Consulta às tabelas oficiais e curadas usadas nas verificações: NCM, Origem, CST do ICMS, "
+                        + "CSOSN, CST do IPI e do PIS/Cofins, alíquotas de ICMS (internas e interestaduais) e "
+                        + "alíquotas de ISS dos municípios (Portal NFS-e), com vigência, base legal e fonte.",
+                "Tab", Tone.GRAY).withoutCompany();
         Feature calendario = f("cons.calendario", "Calendário de Obrigações",
-                "Prazos das obrigações acessórias por regime, com alertas de vencimento.", "Cal", Tone.GRAY);
+                "Prazos das obrigações acessórias por regime, com alertas de vencimento.", "Cal", Tone.GRAY).withoutCompany();
         Feature legislacao = f("cons.legislacao", "Legislação e Base de Regras",
-                "Consulta às regras tributárias cadastradas, com norma, vigência e condições.", "Lei", Tone.GRAY);
+                "Consulta às regras tributárias cadastradas, com norma, vigência e condições.", "Lei", Tone.GRAY).withoutCompany();
 
         // ---- Utilitários
         Feature validaChave = f("util.chave", "Validador de Chave de Acesso",
-                "Confere a estrutura e o dígito verificador da chave de 44 dígitos.", "K", Tone.GRAY);
+                "Confere a estrutura e o dígito verificador da chave de 44 dígitos.", "K", Tone.GRAY).withoutCompany();
         Feature visualizaXml = f("util.xml", "Visualizador de XML",
-                "Exibe um XML fiscal em árvore, com a descrição de cada campo.", "XML", Tone.GRAY);
+                "Exibe um XML fiscal em árvore, com a descrição de cada campo.", "XML", Tone.GRAY).withoutCompany();
 
         // ---- Configurações
         Feature cfgSistema = f("cfg.sistema", "Parâmetros do Sistema",
-                "Preferências gerais do sistema.", "⚙", Tone.GRAY);
+                "Preferências gerais do sistema.", "⚙", Tone.GRAY).withoutCompany();
         Feature cfgPastas = f("cfg.pastas", "Pastas de Trabalho",
-                "Pastas de entrada de XMLs e de saída de resultados no computador.", "Pas", Tone.GRAY);
+                "Pastas de entrada de XMLs e de saída de resultados no computador.", "Pas", Tone.GRAY).withoutCompany();
 
         // ---- Relatórios
         Feature relConferencia = f("rel.conferencia", "Relatório de Conferência",
@@ -150,8 +164,8 @@ public final class ApuracaoFiscalArea {
                 new MenuGroup("Movimentos", Arrays.asList(importar, SEP, entradas, saidas, eventos)),
                 new MenuGroup("Conferência", Arrays.asList(conferencia, achados, regras)),
                 new MenuGroup("Impostos", Arrays.asList(apuracao, SEP, icms, ipi, pisCofins, irpjCsll, iss, simples, ibsCbs)),
-                new MenuGroup("Obrigações", Arrays.asList(central, SEP, efdIcms, efdContrib, simplesOa, ecdEcf, reinf, dctf)),
-                new MenuGroup("Consultas", Arrays.asList(docChave, calendario, legislacao)),
+                new MenuGroup("Obrigações", Arrays.asList(central, catalogo, SEP, efdIcms, efdContrib, simplesOa, ecdEcf, reinf, dctf)),
+                new MenuGroup("Consultas", Arrays.asList(docChave, tabelas, calendario, legislacao)),
                 new MenuGroup("Utilitários", Arrays.asList(validaChave, visualizaXml)),
                 new MenuGroup("Configurações", Arrays.asList(cfgSistema, cfgPastas)),
                 new MenuGroup("Relatórios", Arrays.asList(relApuracao, relConferencia, relOa, relRetidos)),

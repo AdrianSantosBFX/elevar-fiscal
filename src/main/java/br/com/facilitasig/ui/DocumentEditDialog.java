@@ -53,13 +53,16 @@ public class DocumentEditDialog extends JDialog {
     private final JComboBox<String> issRetained = new JComboBox<>(new String[]{"SIM", "NÃO", NA});
     private final DefaultTableModel itemModel;
     private final JTable itemTable;
-    private final JTextArea findings = new JTextArea(5, 60);
+    private final JTextArea findings = new JTextArea(9, 60);
 
     public DocumentEditDialog(Window owner, FiscalService service, Company company, long docId) {
         super(owner, "Corrigir nota", ModalityType.APPLICATION_MODAL);
         this.service = service;
         this.company = company;
-        this.doc = service.repository().load(docId);
+        this.doc = service.repository().load(company.id(), docId);
+        if (this.doc == null) {
+            throw new IllegalArgumentException("A nota não pertence à empresa selecionada.");
+        }
         setLayout(new BorderLayout());
 
         uf.addItem(NA);
@@ -181,7 +184,7 @@ public class DocumentEditDialog extends JDialog {
         }
         StringBuilder sb = new StringBuilder();
         for (Finding f : doc.findings()) {
-            sb.append(f).append('\n');
+            sb.append(f.detail()).append('\n');
         }
         findings.setText(sb.length() == 0 ? "Sem pendências." : sb.toString());
         findings.setBackground(sb.length() == 0 ? new Color(0xEAF7EA) : new Color(0xFFF4D6));

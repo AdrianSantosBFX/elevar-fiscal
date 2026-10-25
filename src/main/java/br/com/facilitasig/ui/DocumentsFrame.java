@@ -221,10 +221,10 @@ public class DocumentsFrame extends JInternalFrame {
         sb.append(d.kind().label()).append(" ").append(d.get("number")).append(" — chave ").append(d.accessKey()).append('\n');
         sb.append("Arquivo: ").append(d.sourcePath()).append('\n');
         if (d.findings().isEmpty()) {
-            sb.append("Sem pendências: nota conforme nas verificações da importação.");
+            sb.append("Sem pendências: nota conforme nas verificações da importação e do XML.");
         }
         for (Finding f : d.findings()) {
-            sb.append(f).append('\n');
+            sb.append(f.detail()).append('\n');
         }
         if (!d.overrides().isEmpty()) {
             sb.append("Campos corrigidos pelo usuário: ").append(d.overrides().size()).append('\n');
@@ -328,7 +328,9 @@ public class DocumentsFrame extends JInternalFrame {
                 .append("Com erro: ").append(r.erro).append('\n')
                 .append("Duplicadas: ").append(r.duplicada).append('\n')
                 .append("Já registradas (repetidas): ").append(r.repetida).append('\n')
-                .append("Ignorados (eventos/resumos): ").append(r.ignorada).append('\n');
+                .append("Eventos aplicados (cancelamento/CC-e): ").append(r.evento).append('\n')
+                .append("De outra empresa (descartados): ").append(r.outraEmpresa).append('\n')
+                .append("Ignorados (outros eventos/resumos): ").append(r.ignorada).append('\n');
         if (!r.messages.isEmpty()) {
             sb.append("\nObservações (até 15):\n");
             for (int i = 0; i < Math.min(15, r.messages.size()); i++) {
@@ -384,7 +386,7 @@ public class DocumentsFrame extends JInternalFrame {
         if (JOptionPane.showConfirmDialog(this, "Excluir " + sel.size() + " nota(s) do banco?\nOs arquivos XML originais não são apagados.",
                 "Excluir", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE) == JOptionPane.YES_OPTION) {
             for (FiscalDoc d : sel) {
-                service.repository().delete(d.id());
+                service.repository().delete(company.id(), d.id());
             }
             reload();
         }

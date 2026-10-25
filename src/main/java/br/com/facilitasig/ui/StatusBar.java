@@ -10,7 +10,7 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 
-/** Barra de status: área de trabalho, empresa, período, etapa atual e versão. */
+/** Barra de status: área de trabalho, empresa, período, etapa atual, avisos e versão. */
 public class StatusBar extends JPanel {
 
     private final JLabel area = new JLabel();
@@ -18,6 +18,7 @@ public class StatusBar extends JPanel {
     private final JLabel period = new JLabel("Período: —");
     private final JLabel step = new JLabel();
     private final JLabel version = new JLabel();
+    private final JLabel message = new JLabel();
 
     public StatusBar(String versionText) {
         super(new BorderLayout());
@@ -33,6 +34,9 @@ public class StatusBar extends JPanel {
         left.add(separator());
         left.add(step);
         add(left, BorderLayout.WEST);
+
+        message.setForeground(new Color(0xB4570A));
+        add(message, BorderLayout.CENTER);
 
         version.setText(versionText);
         version.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 10));
@@ -52,6 +56,12 @@ public class StatusBar extends JPanel {
 
     public void setCompany(String name) {
         company.setText("Empresa: " + (name == null || name.isEmpty() ? "(nenhuma selecionada)" : name));
+    }
+
+    /** Aviso do sistema (ex.: falha ao carregar as tabelas de referência). */
+    public void setMessage(String text) {
+        message.setText(text == null ? "" : text);
+        message.setToolTipText(text);
     }
 
     public void setStep(String text) {

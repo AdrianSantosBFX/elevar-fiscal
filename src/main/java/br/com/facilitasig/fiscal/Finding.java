@@ -23,6 +23,24 @@ public final class Finding {
     public String message() { return message; }
     public String suggestion() { return suggestion; }
 
+    /** Metadados da regra (título, impacto, base legal), vindos do catálogo da versão. */
+    public Rule rule() { return RuleCatalog.get(ruleId); }
+    public String impacts() { return rule().impacts(); }
+    public String basis() { return rule().basis(); }
+
+    /** Texto completo para a tela: mensagem, sugestão, o que afeta e a base legal. */
+    public String detail() {
+        Rule r = rule();
+        StringBuilder sb = new StringBuilder(toString());
+        if (!Fields.NA.equals(r.impacts())) {
+            sb.append("\n      Afeta: ").append(r.impacts());
+        }
+        if (!Fields.NA.equals(r.basis())) {
+            sb.append("\n      Base: ").append(r.basis());
+        }
+        return sb.toString();
+    }
+
     @Override
     public String toString() {
         return "[" + severity + "] " + ruleId + " — " + message

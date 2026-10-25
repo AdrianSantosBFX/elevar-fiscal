@@ -2,17 +2,21 @@ package br.com.facilitasig.fiscal;
 
 import br.com.facilitasig.company.BrDocs;
 import br.com.facilitasig.company.Company;
+import org.w3c.dom.Element;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
  * Validação da etapa de importação. Regras IMP-nnn (estrutura, identidade, coerência interna
- * e cadastro). Não aplica ainda as regras tributárias do catálogo lp-08; usa os valores
- * efetivos (XML + correções do usuário). Ausência de dado nunca conta como conforme.
+ * e cadastro) e, desde a v0.1.1, verificações ERR-g.n que usam apenas o XML da nota e os seus
+ * eventos (ver {@link RuleCatalog}). Não aplica ainda as regras que dependem de tabelas,
+ * parâmetros ou de outras notas. Ausência de dado nunca conta como conforme.
  */
 public final class DocValidator {
 
@@ -23,8 +27,18 @@ public final class DocValidator {
     }
 
     public static List<Finding> validate(FiscalDoc d, Company company, LocalDate today) {
+        return validate(d, company, today, Collections.<FiscalEvent>emptyList());
+    }
+
+    /**
+     * Regras IMP-nnn (v0.0.1) seguidas das verificações ERR-g.n (v0.1.1), que releem o XML
+     * original da nota e consideram os eventos registrados para a chave (cancelamento, CC-e).
+     */
+    public static List<Finding> validate(FiscalDoc d, Company company, LocalDate today, List<FiscalEvent> events) {
         List<Finding> out = new ArrayList<Finding>();
         boolean nfe = d.kind() == DocKind.NFE;
+        Element root = parsedXml(d);
+        Element ide = nfe && root != null ? X.path(nfeInf(root), "ide") : null;
         String me = BrDocs.alphanumeric(company.document());
         String issuer = BrDocs.alphanumeric(d.get("issuer_doc"));
         String recipient = BrDocs.alphanumeric(d.get("recipient_doc"));
@@ -72,7 +86,9 @@ public final class DocValidator {
         checkDoc(out, "recipient_doc", d.get("recipient_doc"), nfe ? "destinatário" : "tomador");
         String uf = d.partyGet("uf");
         String ibge = d.partyGet("ibge");
-        if (Fields.NA.equals(uf) || !BrDocs.isValidUf(uf)) {
+        if ("EX".equalsIgnoreCase(uf) || (!nfe && root != null && foreignTaker(root) && d.direction() == Direction.SAIDA)) {
+            // participante no exterior: sem UF/município brasileiros (ver ERR-2.6)
+        } else if (Fields.NA.equals(uf) || !BrDocs.isValidUf(uf)) {
             out.add(new Finding("IMP-015", Severity.ALERTA, d.partyPrefix() + "uf",
                     "UF do participante ausente ou inválida.", "Informar a UF do participante."));
         } else if (!Fields.NA.equals(ibge) && !BrDocs.isValidIbge(ibge, uf)) {
@@ -104,8 +120,8 @@ public final class DocValidator {
             out.add(new Finding("IMP-007", Severity.ERRO, "items", "Documento sem itens.", null));
         }
         if (nfe) {
-            validateNfeTotals(d, out);
-            validateNfeItems(d, company, out);
+            validateNfeTotals(d, root, out);
+            validateNfeItems(d, ide, out);
         } else {
             if (Fields.NA.equals(d.get("service_code"))) {
                 out.add(new Finding("IMP-012", Severity.ALERTA, "service_code",
@@ -120,7 +136,118 @@ public final class DocValidator {
                 out.add(new Finding("IMP-007", Severity.ERRO, "total_value", "Valor do serviço ausente.", null));
             }
         }
+
+        // ---- v0.1.1: verificações que leem apenas o XML e os eventos
+        if (root != null) {
+            signature(root, out);
+            if (nfe) {
+                eventChecks(events, out);
+                NfeXmlChecks.run(d, root, company, out);
+            } else {
+                NfseXmlChecks.run(d, root, company, out);
+            }
+        }
         return out;
+    }
+
+    // ------------------------------------------------------------------ v0.1.1
+
+    /** XML original relido para as verificações; null se não houver ou não for legível. */
+    static Element parsedXml(FiscalDoc d) {
+        if (d.kind() == DocKind.DESCONHECIDO || d.xml() == null || d.xml().trim().isEmpty()) {
+            return null;
+        }
+        try {
+            return FiscalService.parseXml(d.xml().getBytes(StandardCharsets.UTF_8));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    static Element nfeInf(Element root) {
+        Element nfe = "NFe".equals(X.name(root)) ? root : X.child(root, "NFe");
+        return X.child(nfe, "infNFe");
+    }
+
+    private static boolean foreignTaker(Element nfseRoot) {
+        Element toma = X.path(nfseRoot, "infNFSe", "DPS", "infDPS", "toma");
+        return toma != null && (X.child(toma, "NIF") != null || X.child(toma, "cNaoNIF") != null || X.path(toma, "end", "endExt") != null);
+    }
+
+    /** ERR-1.6 — assinatura digital. */
+    private static void signature(Element root, List<Finding> out) {
+        SignatureCheck.Result r = SignatureCheck.verify(root.getOwnerDocument());
+        switch (r.outcome) {
+            case VALIDA:
+                return;
+            case AUSENTE:
+                out.add(new Finding("ERR-1.6", Severity.ALERTA, "assinatura", r.detail,
+                        "Obter o XML original (autorizado e assinado) com o emitente ou no portal."));
+                return;
+            case NAO_VERIFICADA:
+                out.add(new Finding("ERR-1.6", Severity.ALERTA, "assinatura", "Assinatura não verificada: " + r.detail,
+                        "Conferir o XML no portal da SEFAZ/NFS-e."));
+                return;
+            default:
+                out.add(new Finding("ERR-1.6", Severity.ERRO, "assinatura", "Assinatura digital inválida: " + r.detail,
+                        "Não usar este arquivo; obter o XML original com o emitente ou no portal."));
+        }
+    }
+
+    private static final String[] CCE_FORBIDDEN = {"valor", "base de calculo", "aliquota", "quantidade", "preco", "desconto",
+            "imposto", "icms", "ipi", "cnpj", "cpf", "razao social", "remetente", "destinatario", "data de emissao", "data de saida"};
+
+    /** ERR-1.1 (cancelamento por evento) e ERR-1.10 (CC-e com campo vedado). */
+    private static void eventChecks(List<FiscalEvent> events, List<Finding> out) {
+        FiscalEvent lastCce = null;
+        for (FiscalEvent ev : events) {
+            boolean registered = "135".equals(ev.protocolStatus()) || "136".equals(ev.protocolStatus()) || "155".equals(ev.protocolStatus());
+            if (ev.isCancellation() && registered) {
+                out.add(new Finding("ERR-1.1", Severity.ERRO, "evento", "NF-e CANCELADA por evento registrado em "
+                                + shortDate(ev.eventAt()) + " (cStat " + ev.protocolStatus() + ")"
+                                + (Fields.NA.equals(ev.description()) ? "." : ": " + ev.description() + "."),
+                        "Não usar na apuração. Na EFD: COD_SIT 02 (ou 03 se o período já tiver sido entregue)."));
+            } else if (ev.isCorrection() && registered && (lastCce == null || ev.seq() > lastCce.seq())) {
+                lastCce = ev;
+            }
+        }
+        if (lastCce != null && !Fields.NA.equals(lastCce.description())) {
+            String text = java.text.Normalizer.normalize(lastCce.description().toLowerCase(), java.text.Normalizer.Form.NFD)
+                    .replaceAll("\\p{M}", "");
+            List<String> hits = new ArrayList<String>();
+            for (String term : CCE_FORBIDDEN) {
+                if (text.matches("(?s).*\\b" + term + "\\b.*")) {
+                    hits.add(term);
+                }
+            }
+            if (!hits.isEmpty()) {
+                out.add(new Finding("ERR-1.10", Severity.ALERTA, "evento", "Carta de correção nº " + lastCce.seq() + " menciona "
+                                + NfeXmlChecks.join(hits) + ". CC-e não corrige valores, base, alíquota, quantidade, participante nem datas: "
+                                + "a correção não tem efeito sobre esses campos.",
+                        "Se o erro é de valor ou de participante, exigir nota complementar, devolução ou cancelamento."));
+            }
+        }
+    }
+
+    private static String shortDate(String s) {
+        LocalDate dt = date(s);
+        return dt == null ? s : String.format("%02d/%02d/%d", dt.getDayOfMonth(), dt.getMonthValue(), dt.getYear());
+    }
+
+    /**
+     * A nota pertence à empresa no sentido informado? Saída: emitente (prestador) é a empresa.
+     * Entrada: destinatário (tomador) é a empresa, ou nota própria de entrada (emitente = empresa
+     * e tpNF = 0). Compara o CNPJ completo: matriz e filiais são empresas diferentes.
+     */
+    public static boolean belongsTo(FiscalDoc d, Direction direction, Company company) {
+        String me = BrDocs.alphanumeric(company.document());
+        String issuer = BrDocs.alphanumeric(d.original("issuer_doc"));
+        String recipient = BrDocs.alphanumeric(d.original("recipient_doc"));
+        if (direction == Direction.SAIDA) {
+            return issuer.equals(me);
+        }
+        boolean ownEntry = d.kind() == DocKind.NFE && issuer.equals(me) && "0".equals(d.original("tp_nf"));
+        return recipient.equals(me) || ownEntry;
     }
 
     public static DocStatus statusOf(List<Finding> findings) {
@@ -169,23 +296,50 @@ public final class DocValidator {
         }
     }
 
-    private static void validateNfeTotals(FiscalDoc d, List<Finding> out) {
-        BigDecimal sum = BigDecimal.ZERO;
+    private static void validateNfeTotals(FiscalDoc d, Element root, List<Finding> out) {
+        // Itens fora do total (indTot = 0) e serviços com ISSQN (NF-e conjugada) não entram no vProd.
+        Element inf = root == null ? null : nfeInf(root);
+        List<Element> dets = X.children(inf, "det");
+        boolean aligned = dets.size() == d.itemCount();
+        BigDecimal sumAll = BigDecimal.ZERO;
+        BigDecimal sumIn = BigDecimal.ZERO;
+        BigDecimal sumGoodsIn = BigDecimal.ZERO;
+        BigDecimal outOfTotal = BigDecimal.ZERO;
         boolean all = true;
         for (int i = 0; i < d.itemCount(); i++) {
             BigDecimal v = dec(d.itemGet(i, "value"));
             if (v == null) {
                 all = false;
+                continue;
+            }
+            boolean in = !aligned || !"0".equals(X.text(X.child(dets.get(i), "prod"), "indTot"));
+            boolean service = aligned && X.path(dets.get(i), "imposto", "ISSQN") != null;
+            sumAll = sumAll.add(v);
+            if (in) {
+                sumIn = sumIn.add(v);
+                if (!service) {
+                    sumGoodsIn = sumGoodsIn.add(v);
+                }
             } else {
-                sum = sum.add(v);
+                outOfTotal = outOfTotal.add(v);
             }
         }
         BigDecimal prods = dec(d.get("products_value"));
-        if (all && prods != null && sum.subtract(prods).abs().compareTo(TOL_ITEMS) > 0) {
-            out.add(new Finding("IMP-007", Severity.ALERTA, "products_value",
-                    "Soma dos itens (" + sum.toPlainString() + ") difere do total de produtos (" + prods.toPlainString() + ").",
-                    "Conferir os valores dos itens no XML."));
+        if (all && prods != null) {
+            boolean okIn = sumIn.subtract(prods).abs().compareTo(TOL_ITEMS) <= 0
+                    || sumGoodsIn.subtract(prods).abs().compareTo(TOL_ITEMS) <= 0;
+            boolean okAll = sumAll.subtract(prods).abs().compareTo(TOL_ITEMS) <= 0;
+            if (!okIn && okAll && outOfTotal.signum() > 0) {
+                out.add(new Finding("ERR-5.4", Severity.ALERTA, "products_value",
+                        "Itens marcados como fora do total (indTot = 0, " + outOfTotal.toPlainString() + ") foram somados ao total de produtos ("
+                                + prods.toPlainString() + ").", "Conferir o indicador indTot dos itens e o total da nota."));
+            } else if (!okIn) {
+                out.add(new Finding("IMP-007", Severity.ALERTA, "products_value",
+                        "Soma dos itens (" + sumIn.toPlainString() + ") difere do total de produtos (" + prods.toPlainString() + ").",
+                        "Conferir os valores dos itens no XML."));
+            }
         }
+        String finNFe = inf == null ? Fields.NA : X.text(inf, "ide", "finNFe");
         BigDecimal vnf = dec(d.get("total_value"));
         if (vnf == null || prods == null) {
             out.add(new Finding("IMP-008", Severity.ERRO, "total_value", "Valor total da nota ou de produtos ausente.", null));
@@ -194,18 +348,24 @@ public final class DocValidator {
         BigDecimal calc = prods.subtract(z(d, "discount_value")).subtract(z(d, "deson_value")).add(z(d, "st_value"))
                 .add(z(d, "fcpst_value")).add(z(d, "freight_value")).add(z(d, "insurance_value")).add(z(d, "other_value"))
                 .add(z(d, "ii_value")).add(z(d, "ipi_value")).add(z(d, "ipi_devol_value"));
-        if (calc.subtract(vnf).abs().compareTo(TOL_TOTAL) > 0) {
+        BigDecimal vServ = inf == null ? null : dec(X.text(inf, "total", "ISSQNtot", "vServ"));
+        boolean okWithServ = vServ != null && calc.add(vServ).subtract(vnf).abs().compareTo(TOL_TOTAL) <= 0;
+        // Complementar (2) e ajuste (3) podem não seguir a fórmula do vNF (ver ERR-4.7).
+        boolean adjustment = "2".equals(finNFe) || "3".equals(finNFe);
+        if (!adjustment && !okWithServ && calc.subtract(vnf).abs().compareTo(TOL_TOTAL) > 0) {
             out.add(new Finding("IMP-008", Severity.ALERTA, "total_value",
                     "Valor da nota (" + vnf.toPlainString() + ") difere do calculado pelos totais (" + calc.toPlainString() + ").",
                     "Conferir descontos, frete, seguro, outras despesas e impostos no total."));
         }
     }
 
-    private static void validateNfeItems(FiscalDoc d, Company company, List<Finding> out) {
-        boolean ownEntry = BrDocs.alphanumeric(d.get("issuer_doc")).equals(BrDocs.alphanumeric(company.document()))
-                && "0".equals(d.get("tp_nf"));
+    private static void validateNfeItems(FiscalDoc d, Element ide, List<Finding> out) {
+        // O CFOP segue o tipo da nota (tpNF): 0 = entrada (1/2/3), 1 = saída (5/6/7), seja qual for o emitente.
+        boolean entryNote = "0".equals(d.get("tp_nf"));
         String issuerUf = d.get("issuer_uf");
         String recipUf = d.get("recipient_uf");
+        // Venda presencial a consumidor final de outra UF é operação interna (indPres = 1 e indFinal = 1).
+        boolean presentialFinal = ide != null && "1".equals(X.text(ide, "indPres")) && "1".equals(X.text(ide, "indFinal"));
         for (int i = 0; i < d.itemCount(); i++) {
             String n = "Item " + (i + 1) + ": ";
             String ncm = d.itemGet(i, "ncm");
@@ -220,12 +380,12 @@ public final class DocValidator {
                 continue;
             }
             char first = cfop.charAt(0);
-            boolean okFirst = ownEntry ? (first == '1' || first == '2' || first == '3') : (first == '5' || first == '6' || first == '7');
+            boolean okFirst = entryNote ? (first == '1' || first == '2' || first == '3') : (first == '5' || first == '6' || first == '7');
             if (!okFirst) {
                 out.add(new Finding("IMP-009", Severity.ALERTA, FiscalDoc.itemKey(i, "cfop"),
-                        n + "CFOP " + cfop + " incompatível com " + (ownEntry ? "nota própria de entrada" : "o ponto de vista do emitente") + ".",
+                        n + "CFOP " + cfop + " incompatível com nota de " + (entryNote ? "entrada (tpNF = 0)" : "saída (tpNF = 1)") + ".",
                         "Conferir o CFOP."));
-            } else if (BrDocs.isValidUf(issuerUf) && BrDocs.isValidUf(recipUf)) {
+            } else if (BrDocs.isValidUf(issuerUf) && BrDocs.isValidUf(recipUf) && !presentialFinal) {
                 boolean same = issuerUf.equalsIgnoreCase(recipUf);
                 if ((first == '5' || first == '1') && !same) {
                     out.add(new Finding("IMP-016", Severity.ALERTA, FiscalDoc.itemKey(i, "cfop"),

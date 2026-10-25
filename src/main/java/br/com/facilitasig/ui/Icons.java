@@ -46,6 +46,6 @@ public final class Icons {
 
     /** Ícone da aplicação (janela e barra de tarefas). */
     public static BufferedImage appIcon(int size) {
-        return draw("fs", new Color(0x1F5FA8), size);
+        return draw("EF", new Color(0x1F5FA8), size);
     }
 }

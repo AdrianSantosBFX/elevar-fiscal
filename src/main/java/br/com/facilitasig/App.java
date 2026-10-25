@@ -6,7 +6,7 @@ import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 import java.util.Locale;
 
-/** Ponto de entrada do Facilita.sig. Compatível com Java 8 ou superior. */
+/** Ponto de entrada do Elevar Fiscal. Compatível com Java 8 ou superior. */
 public final class App {
 
     private App() {

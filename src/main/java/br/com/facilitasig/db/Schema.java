@@ -32,6 +32,8 @@ final class Schema {
         List<String[]> all = new ArrayList<String[]>();
         all.add(v1());
         all.add(v2());
+        all.add(v3());
+        all.add(v4());
         return all.toArray(new String[0][]);
     }
 
@@ -43,7 +45,48 @@ final class Schema {
         return sb.toString();
     }
 
-    /** Notas fiscais importadas (NF-e / NFS-e), itens, correções do usuário e achados. */
+    /**
+     * v0.1.2: separação por empresa. Cada CNPJ só guarda as próprias notas; notas de outra empresa
+     * (achado IMP-003) gravadas por versões anteriores são apagadas, junto com as duplicatas que
+     * ficaram sem a nota original. A quantidade apagada fica em app_setting para o aviso na abertura.
+     */
+    private static String[] v4() {
+        String alien = "SELECT doc_id FROM fiscal_doc_finding WHERE rule_id = 'IMP-003'";
+        return new String[]{
+                "INSERT OR REPLACE INTO app_setting (key, value) SELECT 'migration_v4_removed', CAST(COUNT(*) AS TEXT) "
+                        + "FROM fiscal_doc WHERE id IN (" + alien + ") OR (status = 'DUPLICADA' AND duplicate_of IN (" + alien + "))",
+                "DELETE FROM fiscal_doc WHERE status = 'DUPLICADA' AND duplicate_of IN (" + alien + ")",
+                "DELETE FROM fiscal_doc WHERE id IN (" + alien + ")"
+        };
+    }
+
+    /**
+     * v0.1.1: eventos de NF-e (cancelamento e carta de correção), ligados à nota pela chave.
+     * Os metadados das regras (impacto, base legal) ficam no código ({@code RuleCatalog}), não no banco.
+     */
+    private static String[] v3() {
+        return new String[]{
+                "CREATE TABLE fiscal_event ("
+                        + "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                        + "company_id INTEGER NOT NULL REFERENCES company(id) ON DELETE CASCADE, "
+                        + required("access_key") + ", "
+                        + required("event_type") + ", "
+                        + "seq INTEGER NOT NULL, "
+                        + required("event_at") + ", "
+                        + required("protocol_status") + ", "
+                        + required("description") + ", "
+                        + "xml_hash TEXT NOT NULL, source_path TEXT NOT NULL, imported_at TEXT NOT NULL, "
+                        + "xml TEXT NOT NULL, "
+                        + "UNIQUE (company_id, access_key, event_type, seq))",
+                "CREATE INDEX ix_fiscal_event_key ON fiscal_event(company_id, access_key)"
+        };
+    }
+
+    /**
+     * Notas fiscais importadas (NF-e / NFS-e), itens, correções do usuário e achados.
+     * ATENÇÃO: as colunas vêm de {@code Fields.DOC}/{@code Fields.ITEM}; não acrescente chaves
+     * nessas listas sem uma migração nova (bancos já criados não teriam as colunas).
+     */
     private static String[] v2() {
         return new String[]{
                 "CREATE TABLE fiscal_doc ("

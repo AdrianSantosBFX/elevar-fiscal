@@ -14,6 +14,8 @@ import br.com.facilitasig.core.MenuGroup;
 import br.com.facilitasig.core.Step;
 import br.com.facilitasig.core.WorkArea;
 import br.com.facilitasig.core.WorkAreas;
+import br.com.facilitasig.ref.ReferenceLoader;
+import br.com.facilitasig.ref.ReferenceService;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -72,6 +74,11 @@ public class MainFrame extends JFrame {
     private final CompanyRepository companies;
     private Company activeCompany;
     private final FiscalService fiscal;
+    /** Banco de referência (NCM, CST...). Nulo se não abriu: o sistema segue funcionando sem ele. */
+    private ReferenceService references;
+    private String referencesError = "";
+    private volatile boolean referencesLoading;
+    private List<ReferenceLoader.Entry> referencesLoad = new ArrayList<>();
     private WorkArea area;
     private ApuracaoSession session;
     private StepNavigatorPanel navigator;
@@ -110,8 +117,24 @@ public class MainFrame extends JFrame {
             throw ex;
         }
         companies = new CompanyRepository(db);
+        List<Company> seeded = new ArrayList<>();
+        try {
+            seeded = br.com.facilitasig.company.CompanySeeds.apply(companies);
+        } catch (RuntimeException ex) {
+            statusBar.setMessage("Não foi possível cadastrar as empresas de teste: " + ex.getMessage());
+        }
         fiscal = new FiscalService(new FiscalDocRepository(db));
+        openReferences();
         restoreActiveCompany();
+        if (!seeded.isEmpty() && activeCompany == null) {
+            // ainda sem área de trabalho carregada: só registra a empresa em uso (sem fechar janelas nem reiniciar a rotina)
+            activeCompany = seeded.get(0);
+            companies.putSetting(ACTIVE_KEY, String.valueOf(activeCompany.id()));
+            showCompany();
+        }
+        for (Company c : seeded) {
+            statusBar.setMessage("Empresa cadastrada automaticamente: " + c.legalName());
+        }
         try {
             String wm = companies.setting("window_mode");
             if (wm != null) {
@@ -123,29 +146,149 @@ public class MainFrame extends JFrame {
         loadArea(areas.get(0));
     }
 
+    // ------------------------------------------------------------------ tabelas de referência
+
+    /**
+     * Abre o banco de referência (arquivo próprio, ao lado do banco das empresas) e carrega as tabelas
+     * embutidas que mudaram. Falha aqui não impede o uso do sistema: a consulta mostra o motivo.
+     */
+    private void openReferences() {
+        try {
+            references = ReferenceService.openDefault();
+        } catch (RuntimeException ex) {
+            references = null;
+            referencesError = ex.getMessage();
+            statusBar.setMessage("Tabelas de referência indisponíveis: " + ex.getMessage());
+            return;
+        }
+        // A carga roda em segundo plano: na primeira abertura (ou quando a tabela de ISS muda) leva alguns segundos.
+        referencesLoading = true;
+        final ReferenceService refs = references;
+        new javax.swing.SwingWorker<List<ReferenceLoader.Entry>, String>() {
+            @Override
+            protected List<ReferenceLoader.Entry> doInBackground() {
+                return refs.loadBundled(text -> publish(text));
+            }
+
+            @Override
+            protected void process(List<String> chunks) {
+                statusBar.setMessage(chunks.get(chunks.size() - 1));
+            }
+
+            @Override
+            protected void done() {
+                referencesLoading = false;
+                statusBar.setMessage("");
+                try {
+                    referencesLoad = get();
+                    for (ReferenceLoader.Entry e : referencesLoad) {
+                        if (e.action() == ReferenceLoader.Action.ERRO) {
+                            statusBar.setMessage("Tabelas de referência: erro ao carregar " + e.dataset()
+                                    + " (ver Consultas > Tabelas de Referência > Fontes)");
+                        }
+                    }
+                } catch (Exception ex) {
+                    statusBar.setMessage("Tabelas de referência: falha na carga: " + ex.getMessage());
+                }
+            }
+        }.execute();
+    }
+
+    /** As tabelas de referência estão prontas? Senão avisa (carga em andamento ou banco indisponível). */
+    private boolean referencesReady(Feature feature) {
+        if (referencesLoading) {
+            JOptionPane.showMessageDialog(this, "As tabelas de referência estão sendo carregadas (primeira abertura ou "
+                    + "atualização).\nAcompanhe na barra de status e tente de novo em alguns segundos.",
+                    feature.title(), JOptionPane.INFORMATION_MESSAGE);
+            return false;
+        }
+        if (references == null) {
+            JOptionPane.showMessageDialog(this, "O banco de referência não pôde ser aberto:\n" + referencesError,
+                    feature.title(), JOptionPane.WARNING_MESSAGE);
+            return false;
+        }
+        return true;
+    }
+
     // ------------------------------------------------------------------ empresa ativa
 
     private static final String ACTIVE_KEY = "active_company_id";
 
     private void restoreActiveCompany() {
         String id = companies.setting(ACTIVE_KEY);
-        if (id != null) {
+        if (id != null && !id.isEmpty()) {
             try {
                 activeCompany = companies.findById(Long.parseLong(id));
             } catch (NumberFormatException ignored) {
                 activeCompany = null;
             }
         }
-        statusBar.setCompany(activeCompany == null ? null : activeCompany.legalName());
+        showCompany();
+        final String removed = companies.setting("migration_v4_removed");
+        if (removed != null && !removed.isEmpty() && !"0".equals(removed)) {
+            companies.putSetting("migration_v4_removed", "0");
+            javax.swing.SwingUtilities.invokeLater(() -> JOptionPane.showMessageDialog(this,
+                    "Separação por empresa: " + removed + " nota(s) de outras empresas, gravadas por versões anteriores,\n"
+                            + "foram apagadas do banco. Importe-as na empresa correta, se precisar delas.",
+                    AppInfo.NAME, JOptionPane.INFORMATION_MESSAGE));
+        }
     }
 
+    /**
+     * Troca a empresa de trabalho. Fecha as janelas com dados da empresa anterior (notas, SPED,
+     * apuração) e reinicia a rotina, que é sempre de uma empresa. Cadastros gerais ficam abertos.
+     */
     private void setActiveCompany(Company company) {
+        boolean same = company != null && activeCompany != null && company.id() != null && company.id().equals(activeCompany.id());
         activeCompany = company;
-        closeFrame("mov.importar");
-        closeFrame("mov.entradas");
-        closeFrame("mov.saidas");
         companies.putSetting(ACTIVE_KEY, company == null ? "" : String.valueOf(company.id()));
-        statusBar.setCompany(company == null ? null : company.legalName());
+        if (!same) {
+            for (String id : new ArrayList<>(openFrames.keySet())) {
+                if (area.findFeature(id).map(Feature::companyScoped).orElse(true)) {
+                    closeFrame(id);
+                }
+            }
+            resetRoutine();
+        }
+        showCompany();
+        setJMenuBar(buildMenuBar());
+        revalidate();
+    }
+
+    private void showCompany() {
+        statusBar.setCompany(activeCompany == null ? null : activeCompany.displayName());
+        setTitle(activeCompany == null ? AppInfo.NAME + " — nenhuma empresa selecionada"
+                : AppInfo.NAME + " — " + activeCompany.legalName() + " (" + activeCompany.documentFormatted() + ")");
+    }
+
+    /** Menu Empresa > Selecionar empresa. Devolve true se uma empresa ficou selecionada. */
+    private boolean selectCompany() {
+        CompanySelectDialog dlg = new CompanySelectDialog(this, companies, activeCompany);
+        dlg.setVisible(true);
+        if (dlg.choice() == CompanySelectDialog.Choice.SELECTED) {
+            setActiveCompany(dlg.selected());
+            return true;
+        }
+        if (dlg.choice() == CompanySelectDialog.Choice.OPEN_REGISTRY) {
+            openFeatureById("cad.empresa");
+        }
+        return false;
+    }
+
+    /** Nova rotina de apuração (troca de empresa), sem fechar as janelas gerais. */
+    private void resetRoutine() {
+        if (area == null) {
+            return;
+        }
+        session = new ApuracaoSession(area.steps());
+        session.addListener(this::updateStatus);
+        if (!area.steps().isEmpty()) {
+            navigator = new StepNavigatorPanel(session, this::openStep);
+            split.setLeftComponent(navigator);
+            navigator.setVisible(navigatorVisible);
+            split.setDividerLocation(navigatorVisible ? 270 : 0);
+        }
+        updateStatus();
     }
 
     public Company activeCompany() {
@@ -202,6 +345,7 @@ public class MainFrame extends JFrame {
     private JMenuBar buildMenuBar() {
         JMenuBar bar = new JMenuBar();
         bar.add(buildAreasMenu());
+        bar.add(buildCompanyMenu());
         for (MenuGroup group : area.menus()) {
             bar.add(buildGroupMenu(group));
         }
@@ -229,6 +373,29 @@ public class MainFrame extends JFrame {
         exit.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_Q, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask()));
         exit.addActionListener(e -> exitApp());
         menu.add(exit);
+        return menu;
+    }
+
+    /** Menu Empresa: a empresa em uso define tudo o que o sistema mostra. */
+    private JMenu buildCompanyMenu() {
+        JMenu menu = new JMenu("Empresa");
+        JMenuItem current = new JMenuItem(activeCompany == null ? "Nenhuma empresa selecionada"
+                : "Em uso: " + activeCompany.displayName());
+        current.setEnabled(false);
+        menu.add(current);
+        menu.addSeparator();
+        JMenuItem select = new JMenuItem("Selecionar empresa...");
+        select.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_E, Toolkit.getDefaultToolkit().getMenuShortcutKeyMask()));
+        select.addActionListener(e -> selectCompany());
+        menu.add(select);
+        JMenuItem close = new JMenuItem("Fechar empresa");
+        close.setEnabled(activeCompany != null);
+        close.addActionListener(e -> setActiveCompany(null));
+        menu.add(close);
+        menu.addSeparator();
+        JMenuItem registry = new JMenuItem("Cadastro de empresas e estabelecimentos...");
+        registry.addActionListener(e -> openFeatureById("cad.empresa"));
+        menu.add(registry);
         return menu;
     }
 
@@ -420,12 +587,13 @@ public class MainFrame extends JFrame {
                     "Etapa bloqueada", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
-        boolean needsCompany = "mov.importar".equals(feature.id()) || "mov.entradas".equals(feature.id())
-                || "mov.saidas".equals(feature.id());
-        if (needsCompany && activeCompany == null) {
-            JOptionPane.showMessageDialog(this, "Selecione a empresa ativa em Cadastros > Empresas e Estabelecimentos.",
-                    "Empresa", JOptionPane.INFORMATION_MESSAGE);
-            return;
+        if (feature.companyScoped() && activeCompany == null) {
+            int answer = JOptionPane.showConfirmDialog(this, "\"" + feature.title() + "\" mostra dados de uma empresa.\n"
+                            + "Selecione a empresa de trabalho (menu Empresa). Selecionar agora?",
+                    "Empresa", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+            if (answer != JOptionPane.YES_OPTION || !selectCompany() || activeCompany == null) {
+                return;
+            }
         }
         JInternalFrame existing = openFrames.get(feature.id());
         if (existing != null) {
@@ -488,6 +656,32 @@ public class MainFrame extends JFrame {
         } else if ("mov.importar".equals(feature.id())) {
             frame = new DocumentsHubFrame(feature, activeCompany.id(), activeCompany.legalName(), fiscal.repository(),
                     () -> openFeatureById("mov.entradas"), () -> openFeatureById("mov.saidas"), actions);
+        } else if ("conf.regras".equals(feature.id())) {
+            frame = new RulesCatalogFrame(feature);
+        } else if ("oa.central".equals(feature.id()) || "oa.catalogo".equals(feature.id())
+                || "cons.calendario".equals(feature.id())) {
+            if (!referencesReady(feature)) {
+                return;
+            }
+            br.com.facilitasig.oa.ObligationService obligations;
+            try {
+                obligations = new br.com.facilitasig.oa.ObligationService(references.obligations());
+            } catch (RuntimeException ex) {
+                JOptionPane.showMessageDialog(this, "Não foi possível ler o catálogo de obrigações:\n" + ex.getMessage(),
+                        feature.title(), JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+            frame = "oa.central".equals(feature.id())
+                    ? new ObligationsCentralFrame(feature, obligations, activeCompany, actions)
+                    : new ObligationsCatalogFrame(feature, obligations, "cons.calendario".equals(feature.id()));
+        } else if ("cons.tabelas".equals(feature.id())) {
+            if (referencesLoading) {
+                JOptionPane.showMessageDialog(this, "As tabelas de referência estão sendo carregadas (primeira abertura ou "
+                        + "atualização).\nAcompanhe na barra de status e tente de novo em alguns segundos.",
+                        feature.title(), JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            frame = new ReferenceTablesFrame(feature, references, referencesError, referencesLoad);
         } else {
             frame = new PlaceholderFrame(feature, stepIndex + 1, step, actions);
         }

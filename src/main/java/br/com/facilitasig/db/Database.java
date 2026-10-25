@@ -15,14 +15,25 @@ import java.sql.Statement;
 public final class Database {
 
     private final File file;
+    private final String[][] migrations;
 
+    /** Banco principal do sistema (empresas, notas, achados), com o esquema de {@link Schema}. */
     public Database(File file) {
+        this(file, Schema.migrations());
+    }
+
+    /**
+     * Banco com esquema próprio (ex.: o banco de referência, {@code elevar-fiscal-ref.db}). Cada
+     * banco controla a sua versão de esquema por PRAGMA user_version, independentemente dos outros.
+     */
+    public Database(File file, String[][] migrations) {
         this.file = file;
+        this.migrations = migrations;
         try {
             Class.forName("org.sqlite.JDBC");
         } catch (ClassNotFoundException e) {
             throw new IllegalStateException("Driver SQLite (sqlite-jdbc) não encontrado. "
-                    + "Mantenha a pasta lib ao lado do facilita-sig.jar.", e);
+                    + "Mantenha a pasta lib ao lado do elevar-fiscal.jar.", e);
         }
         migrate();
     }
@@ -54,7 +65,6 @@ public final class Database {
     }
 
     private void migrate() {
-        String[][] migrations = Schema.migrations();
         try (Connection c = connect()) {
             int current;
             try (Statement st = c.createStatement(); ResultSet rs = st.executeQuery("PRAGMA user_version")) {

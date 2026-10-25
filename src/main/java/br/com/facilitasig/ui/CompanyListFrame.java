@@ -10,6 +10,8 @@ import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JInternalFrame;
 import javax.swing.JLabel;
+import javax.swing.JMenuItem;
+import javax.swing.JPopupMenu;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
@@ -27,7 +29,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Lista de empresas cadastradas: cadastrar, editar, excluir e escolher a empresa ativa. */
+/** Lista de empresas cadastradas: cadastrar, editar, excluir e escolher a empresa de trabalho. */
 public class CompanyListFrame extends JInternalFrame {
 
     /** Ligação com a janela principal. */
@@ -44,7 +46,7 @@ public class CompanyListFrame extends JInternalFrame {
     private final List<Company> rows = new ArrayList<Company>();
     private final JTable table;
     private final JButton complete = new JButton("Concluir etapa e avançar");
-    private final JButton sample = new JButton("Cadastrar empresa fictícia");
+    private final JButton sample = new JButton("Cadastrar exemplo...");
     private final PlaceholderFrame.StepActions actions;
 
     private final AbstractTableModel model = new AbstractTableModel() {
@@ -89,7 +91,7 @@ public class CompanyListFrame extends JInternalFrame {
 
         JLabel title = new JLabel("Empresas cadastradas");
         title.setFont(title.getFont().deriveFont(java.awt.Font.BOLD, 16f));
-        JLabel sub = new JLabel("Cada CNPJ é um cadastro. A empresa ativa (●) é a usada na rotina de apuração.");
+        JLabel sub = new JLabel("Cada CNPJ é um cadastro (matriz e filiais separadas). A empresa em uso (●) é a única cujos dados o sistema mostra.");
         sub.setForeground(new Color(0x6B7785));
         JPanel head = new JPanel(new BorderLayout());
         head.setBorder(BorderFactory.createEmptyBorder(12, 16, 8, 16));
@@ -118,12 +120,13 @@ public class CompanyListFrame extends JInternalFrame {
         JButton add = new JButton("Nova empresa...");
         JButton edit = new JButton("Editar...");
         JButton remove = new JButton("Excluir");
-        JButton activate = new JButton("Definir como ativa");
+        JButton activate = new JButton("Usar esta empresa");
         add.addActionListener(e -> openForm(null));
         edit.addActionListener(e -> edit());
         remove.addActionListener(e -> remove());
         activate.addActionListener(e -> activate());
-        sample.addActionListener(e -> registerSample());
+        sample.setToolTipText("Cadastra uma das empresas reais usadas nos testes (L5, Sintepro)");
+        sample.addActionListener(e -> chooseSample());
 
         JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 6));
         buttons.add(add);
@@ -162,10 +165,9 @@ public class CompanyListFrame extends JInternalFrame {
         rows.clear();
         rows.addAll(repository.findAll());
         model.fireTableDataChanged();
-        boolean hasDemo = repository.findByDocument(br.com.facilitasig.company.IdType.CNPJ, SampleCompanies.demo().document()) != null;
-        sample.setVisible(!hasDemo);
+        sample.setVisible(!missingSamples().isEmpty());
         complete.setEnabled(actions != null && !actions.isDone() && host.activeCompany() != null);
-        complete.setToolTipText(host.activeCompany() == null ? "Defina a empresa ativa para concluir a etapa." : null);
+        complete.setToolTipText(host.activeCompany() == null ? "Selecione a empresa de trabalho para concluir a etapa." : null);
     }
 
     private Company selected() {
@@ -220,14 +222,35 @@ public class CompanyListFrame extends JInternalFrame {
         }
     }
 
-    private void registerSample() {
+    /** Empresas de exemplo ainda não cadastradas. */
+    private List<Company> missingSamples() {
+        List<Company> out = new ArrayList<Company>();
+        for (Company c : SampleCompanies.all()) {
+            if (repository.findByDocument(c.idType(), c.document()) == null) {
+                out.add(c);
+            }
+        }
+        return out;
+    }
+
+    private void chooseSample() {
+        JPopupMenu menu = new JPopupMenu();
+        for (final Company c : missingSamples()) {
+            JMenuItem item = new JMenuItem(c.documentFormatted() + " — " + c.legalName());
+            item.addActionListener(e -> registerSample(c));
+            menu.add(item);
+        }
+        menu.show(sample, 0, sample.getHeight());
+    }
+
+    private void registerSample(Company sampleCompany) {
         try {
-            Company demo = repository.save(SampleCompanies.demo());
+            Company saved = repository.save(sampleCompany);
             if (host.activeCompany() == null) {
-                host.setActiveCompany(demo);
+                host.setActiveCompany(saved);
             }
         } catch (RuntimeException ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Cadastro de demonstração", JOptionPane.WARNING_MESSAGE);
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Cadastro de exemplo", JOptionPane.WARNING_MESSAGE);
         }
         reload();
     }

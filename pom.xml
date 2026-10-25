@@ -5,11 +5,11 @@
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>br.com.facilitasig</groupId>
-  <artifactId>facilita-sig</artifactId>
-  <version>0.0.1</version>
+  <artifactId>elevar-fiscal</artifactId>
+  <version>0.1.5</version>
   <packaging>jar</packaging>
-  <name>Facilita.sig</name>
-  <description>Aplicativo desktop para organização e conferência de documentos fiscais</description>
+  <name>Elevar Fiscal</name>
+  <description>Sistema de conferência fiscal autônoma (v0.1.5): empresa de trabalho, importação de NF-e/NFS-e, verificações do XML e tabelas de referência (NCM, CST, ICMS, ISS) e obrigações acessórias (LP e LR)</description>
 
   <properties>
     <maven.compiler.source>1.8</maven.compiler.source>
@@ -42,7 +42,7 @@
   </dependencies>
 
   <build>
-    <finalName>facilita-sig</finalName>
+    <finalName>elevar-fiscal</finalName>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>

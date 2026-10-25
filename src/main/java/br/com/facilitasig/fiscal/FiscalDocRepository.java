@@ -126,9 +126,13 @@ public final class FiscalDocRepository {
         }
     }
 
-    public void delete(long id) {
-        try (Connection c = db.connect()) {
-            exec(c, "DELETE FROM fiscal_doc WHERE id = ?", id);
+    /** Exclui a nota somente se ela for da empresa informada. Devolve false se não excluiu. */
+    public boolean delete(long companyId, long id) {
+        try (Connection c = db.connect(); PreparedStatement ps = c.prepareStatement(
+                "DELETE FROM fiscal_doc WHERE id = ? AND company_id = ?")) {
+            ps.setLong(1, id);
+            ps.setLong(2, companyId);
+            return ps.executeUpdate() > 0;
         } catch (SQLException e) {
             throw new DatabaseException("Falha ao excluir a nota", e);
         }
@@ -242,8 +246,17 @@ public final class FiscalDocRepository {
                 rs.getString("field"), rs.getString("message"), sug);
     }
 
-    /** Nota completa: itens, correções, achados e XML. */
-    public FiscalDoc load(long id) {
+    /**
+     * Nota completa da empresa informada; null se não existir ou for de outra empresa.
+     * É a única leitura de nota individual disponível fora do pacote: nada mostra nota alheia.
+     */
+    public FiscalDoc load(long companyId, long id) {
+        FiscalDoc d = load(id);
+        return d != null && d.companyId() == companyId ? d : null;
+    }
+
+    /** Nota completa: itens, correções, achados e XML (uso interno; a tela usa {@link #load(long, long)}). */
+    FiscalDoc load(long id) {
         try (Connection c = db.connect()) {
             FiscalDoc d;
             try (PreparedStatement ps = c.prepareStatement("SELECT " + docColumns() + ", xml FROM fiscal_doc WHERE id = ?")) {
@@ -319,6 +332,90 @@ public final class FiscalDocRepository {
         } catch (SQLException e) {
             throw new DatabaseException("Falha ao procurar a nota", e);
         }
+    }
+
+    // ------------------------------------------------------------------ eventos
+
+    /** Grava o evento; devolve false se o mesmo evento (chave, tipo, sequência) já existia. */
+    public boolean insertEvent(FiscalEvent ev) {
+        try (Connection c = db.connect()) {
+            try (PreparedStatement ps = c.prepareStatement("SELECT id FROM fiscal_event "
+                    + "WHERE company_id = ? AND access_key = ? AND event_type = ? AND seq = ?")) {
+                ps.setLong(1, ev.companyId());
+                ps.setString(2, ev.accessKey());
+                ps.setString(3, ev.type());
+                ps.setInt(4, ev.seq());
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        return false;
+                    }
+                }
+            }
+            Map<String, Object> r = new LinkedHashMap<String, Object>();
+            r.put("company_id", ev.companyId());
+            r.put("access_key", ev.accessKey());
+            r.put("event_type", ev.type());
+            r.put("seq", ev.seq());
+            r.put("event_at", ev.eventAt());
+            r.put("protocol_status", ev.protocolStatus());
+            r.put("description", ev.description());
+            r.put("xml_hash", ev.xmlHash());
+            r.put("source_path", ev.sourcePath());
+            r.put("imported_at", LocalDateTime.now().withNano(0).toString());
+            r.put("xml", ev.xml());
+            ev.setId(insertRow(c, "fiscal_event", r));
+            return true;
+        } catch (SQLException e) {
+            throw new DatabaseException("Falha ao gravar o evento", e);
+        }
+    }
+
+    /** Eventos registrados para a chave de acesso, em ordem de tipo e sequência. */
+    public List<FiscalEvent> events(long companyId, String accessKey) {
+        List<FiscalEvent> out = new ArrayList<FiscalEvent>();
+        try (Connection c = db.connect(); PreparedStatement ps = c.prepareStatement(
+                "SELECT id, company_id, access_key, event_type, seq, event_at, protocol_status, description, xml_hash, source_path "
+                        + "FROM fiscal_event WHERE company_id = ? AND access_key = ? ORDER BY event_type, seq")) {
+            ps.setLong(1, companyId);
+            ps.setString(2, accessKey);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    FiscalEvent ev = new FiscalEvent();
+                    ev.setId(rs.getLong(1));
+                    ev.setCompanyId(rs.getLong(2));
+                    ev.setAccessKey(rs.getString(3));
+                    ev.setType(rs.getString(4));
+                    ev.setSeq(rs.getInt(5));
+                    ev.setEventAt(rs.getString(6));
+                    ev.setProtocolStatus(rs.getString(7));
+                    ev.setDescription(rs.getString(8));
+                    ev.setXmlHash(rs.getString(9));
+                    ev.setSourcePath(rs.getString(10));
+                    out.add(ev);
+                }
+            }
+        } catch (SQLException e) {
+            throw new DatabaseException("Falha ao ler os eventos", e);
+        }
+        return out;
+    }
+
+    /** Notas (não duplicadas) da empresa com a chave, em qualquer sentido. */
+    public List<Long> docIdsByKey(long companyId, String accessKey) {
+        List<Long> out = new ArrayList<Long>();
+        try (Connection c = db.connect(); PreparedStatement ps = c.prepareStatement(
+                "SELECT id FROM fiscal_doc WHERE company_id = ? AND access_key = ? AND status <> 'DUPLICADA' ORDER BY id")) {
+            ps.setLong(1, companyId);
+            ps.setString(2, accessKey);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    out.add(rs.getLong(1));
+                }
+            }
+        } catch (SQLException e) {
+            throw new DatabaseException("Falha ao procurar a nota", e);
+        }
+        return out;
     }
 
     public Map<DocStatus, Integer> counts(long companyId, Direction dir) {
